@@ -1,0 +1,7 @@
+{
+  "name": "WeatherGPT",
+  "description": "Conversational AI assistant delivering actionable, plain-language weather advice grounded in live Open-Meteo forecast data, Google Search grounding, Telugu translations, and live voice conversations.",
+  "requestFramePermissions": ["geolocation", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

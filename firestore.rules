@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if user owns the document path
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // User profile: only the authenticated user can read & write their own profile
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+
+      // User advisory chat history subcollection
+      match /history/{historyId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // User saved locations subcollection
+      match /savedLocations/{locationId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+  }
+}
