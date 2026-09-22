@@ -14,12 +14,13 @@ import {
   Sparkles,
   PhoneCall,
 } from "lucide-react";
-import { WeatherAlert, LocationItem } from "../types";
+import { WeatherAlert, LocationItem, SupportedLanguageCode } from "../types";
+import { getLanguageInfo } from "../data/languages";
 
 interface WeatherAlertBannerProps {
   alert: WeatherAlert;
   activeLocation: LocationItem;
-  language: "en" | "te";
+  language: SupportedLanguageCode;
   onAskAboutAlert: (query: string) => void;
   onOpenTgicccModal?: () => void;
 }
@@ -36,8 +37,15 @@ export const WeatherAlertBanner: React.FC<WeatherAlertBannerProps> = ({
   if (isDismissed) return null;
 
   const isTelugu = language === "te";
-  const displayTitle = isTelugu ? alert.titleTelugu : alert.title;
-  const displayDesc = isTelugu ? alert.descriptionTelugu : alert.description;
+  const langInfo = getLanguageInfo(language);
+  const displayTitle =
+    alert.titleTranslations?.[language] ||
+    (isTelugu && alert.titleTelugu ? alert.titleTelugu : undefined) ||
+    alert.title;
+  const displayDesc =
+    alert.descriptionTranslations?.[language] ||
+    (isTelugu && alert.descriptionTelugu ? alert.descriptionTelugu : undefined) ||
+    alert.description;
 
   const getAlertIcon = () => {
     switch (alert.type) {
@@ -88,6 +96,8 @@ export const WeatherAlertBanner: React.FC<WeatherAlertBannerProps> = ({
   const handleQueryAlert = () => {
     const query = isTelugu
       ? `${activeLocation.name}లో ${displayTitle} గురించి పూర్తి వివరాలు మరియు తీసుకోవాల్సిన జాగ్రత్తలు ఏమిటి?`
+      : language === "hi"
+      ? `${activeLocation.name} में ${displayTitle} के बारे में पूरी जानकारी और क्या सावधानियां बरतनी चाहिए?`
       : `What precautions should I take regarding the ${alert.title.toLowerCase()} in ${activeLocation.name}?`;
     onAskAboutAlert(query);
   };

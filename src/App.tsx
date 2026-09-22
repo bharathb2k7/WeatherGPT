@@ -4,9 +4,11 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { Send, MapPin, Sparkles, Mic, Languages, ShieldAlert, Radio } from "lucide-react";
+import { Send, MapPin, Sparkles, Mic, Languages, ShieldAlert, Radio, Volume2 } from "lucide-react";
 import { Header } from "./components/Header";
 import { WeatherHero } from "./components/WeatherHero";
+import { VoiceAssistantCard } from "./components/VoiceAssistantCard";
+import { FarmerModeCard } from "./components/FarmerModeCard";
 import { LocationModal } from "./components/LocationModal";
 import { VoiceModal } from "./components/VoiceModal";
 import { TgicccModal } from "./components/TgicccModal";
@@ -15,7 +17,18 @@ import { ChatMessageBubble } from "./components/ChatMessageBubble";
 import { TypingIndicator } from "./components/TypingIndicator";
 import { WeatherAlertBanner } from "./components/WeatherAlertBanner";
 import { DEFAULT_LOCATIONS } from "./data/constants";
-import { LocationItem, CurrentWeatherData, ChatMessage } from "./types";
+import { LocationItem, CurrentWeatherData, ChatMessage, SupportedLanguageCode } from "./types";
+import { getLanguageInfo, getUiTranslation } from "./data/languages";
+import {
+  startListening,
+  speakText,
+  stopSpeaking,
+  isSpeechRecognitionSupported,
+  ActiveRecognitionHandle,
+  VoiceUnavailableInfo,
+} from "./utils/speech";
+import { VoiceSettingsModal } from "./components/VoiceSettingsModal";
+import { VoiceUnavailableDialog } from "./components/VoiceUnavailableDialog";
 import {
   auth,
   signInWithGoogle,
@@ -25,6 +38,7 @@ import {
   getUserChatHistory,
 } from "./firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
+import { fetchCurrentWeatherSafely } from "./utils/weatherService";
 
 export default function App() {
   // Default location: Hyderabad, Telangana
@@ -37,9 +51,29 @@ export default function App() {
   const [isLoadingWeather, setIsLoadingWeather] = useState(false);
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState(false);
+  const [isVoiceSettingsOpen, setIsVoiceSettingsOpen] = useState(false);
+  const [voiceUnavailableInfo, setVoiceUnavailableInfo] = useState<VoiceUnavailableInfo | null>(null);
   const [isTgicccModalOpen, setIsTgicccModalOpen] = useState(false);
-  const [language, setLanguage] = useState<"en" | "te">("en");
+  const [language, setLanguage] = useState<SupportedLanguageCode>("en");
+  const [translatingMessageId, setTranslatingMessageId] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+
+  const langInfo = getLanguageInfo(language);
+  const ui = getUiTranslation(language);
+
+  // Listen for voice-unavailable events dispatched from speech synthesis
+  useEffect(() => {
+    const handleVoiceUnavailable = (event: Event) => {
+      const customEvent = event as CustomEvent<VoiceUnavailableInfo>;
+      if (customEvent.detail) {
+        setVoiceUnavailableInfo(customEvent.detail);
+      }
+    };
+    window.addEventListener("weathergpt:voice-unavailable", handleVoiceUnavailable);
+    return () => {
+      window.removeEventListener("weathergpt:voice-unavailable", handleVoiceUnavailable);
+    };
+  }, []);
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -119,17 +153,12 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
   const fetchCurrentWeather = async (loc: LocationItem) => {
     setIsLoadingWeather(true);
     try {
-      const res = await fetch(
-        `/api/weather/current?lat=${loc.latitude}&lon=${loc.longitude}&timezone=${encodeURIComponent(
-          loc.timezone || "Asia/Kolkata"
-        )}`
-      );
-      if (res.ok) {
-        const data = await res.json();
+      const data = await fetchCurrentWeatherSafely(loc);
+      if (data) {
         setCurrentWeather(data);
       }
     } catch (err) {
-      console.error("Failed to load header weather:", err);
+      console.warn("Weather snapshot temporarily unavailable:", err);
     } finally {
       setIsLoadingWeather(false);
     }
@@ -193,11 +222,26 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
         minute: "2-digit",
       });
 
+      const finalReply =
+        language === "te" && data.contentTelugu
+          ? data.contentTelugu
+          : data.translatedContent && data.translatedContent.language === language
+          ? data.translatedContent.text
+          : data.reply;
+
       const newAssistantMessage: ChatMessage = {
         id: assistantMessageId,
         role: "assistant",
-        content: data.reply,
-        contentTelugu: data.contentTelugu,
+        content: finalReply,
+        contentTelugu: data.contentTelugu || (language === "te" ? finalReply : undefined),
+        translatedContent: data.translatedContent,
+        translations: {
+          ...(data.contentTelugu ? { te: data.contentTelugu } : {}),
+          ...(data.translatedContent
+            ? { [data.translatedContent.language]: data.translatedContent.text }
+            : {}),
+          ...(language === "te" && finalReply ? { te: finalReply } : {}),
+        },
         timestamp: assistantTimestamp,
         toolSummary: data.toolSummary,
         weatherSnapshot: data.weatherSnapshot,
@@ -210,11 +254,13 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
       if (user) {
         saveUserChatHistory(user.uid, {
           query: text,
-          reply: data.reply,
+          reply: finalReply,
           location: activeLocation.name,
           language,
         });
       }
+
+      return finalReply;
     } catch (error: any) {
       console.error("Chat error:", error);
       const errorMessageId = `err-${Date.now()}`;
@@ -232,12 +278,79 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
       };
 
       setMessages((prev) => [...prev, fallbackErrorMessage]);
+      return fallbackErrorMessage.content;
     } finally {
       setIsLoading(false);
       setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
     }
+  };
+
+  // Dedicated speech-to-text input handler that syncs speech directly into search input field
+  const [isListeningInput, setIsListeningInput] = useState<boolean>(false);
+  const [inputVolumeLevel, setInputVolumeLevel] = useState<number>(0);
+  const [inputSpeechError, setInputSpeechError] = useState<string | null>(null);
+  const inputRecognitionRef = useRef<ActiveRecognitionHandle | null>(null);
+
+  const handleToggleInputSpeech = () => {
+    setInputSpeechError(null);
+    if (isListeningInput) {
+      inputRecognitionRef.current?.stop();
+      setIsListeningInput(false);
+      setInputVolumeLevel(0);
+      return;
+    }
+
+    if (!isSpeechRecognitionSupported()) {
+      setInputSpeechError(
+        language === "te"
+          ? "మైక్రోఫోన్ అందుబాటులో లేదు. దయచేసి టైప్ చేయండి."
+          : "Microphone access is unavailable. You can type your question instead."
+      );
+      return;
+    }
+
+    setIsListeningInput(true);
+    setInputVolumeLevel(0);
+
+    const handle = startListening({
+      language,
+      onStart: () => {
+        setIsListeningInput(true);
+        setInputSpeechError(null);
+      },
+      onVolumeChange: (vol) => {
+        setInputVolumeLevel(vol);
+      },
+      onInterim: (text) => {
+        setInputMessage(text);
+      },
+      onFinal: async (finalText) => {
+        setIsListeningInput(false);
+        setInputVolumeLevel(0);
+        const clean = finalText.trim();
+        setInputMessage(clean);
+        if (clean) {
+          const reply = await handleSendMessage(clean);
+          if (reply && typeof reply === "string") {
+            speakText(reply, language);
+          }
+        }
+      },
+      onError: (err) => {
+        console.warn("Input microphone notice/error:", err);
+        setIsListeningInput(false);
+        setInputVolumeLevel(0);
+        setInputSpeechError(err);
+      },
+      onEnd: () => {
+        setIsListeningInput(false);
+        setInputVolumeLevel(0);
+      },
+    });
+
+    inputRecognitionRef.current = handle;
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -270,9 +383,52 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
     ]);
   };
 
-  const toggleLanguage = () => {
-    const nextLang = language === "en" ? "te" : "en";
-    setLanguage(nextLang);
+  const handleTranslateMessage = async (
+    messageId: string,
+    targetLang: SupportedLanguageCode
+  ) => {
+    const msg = messages.find((m) => m.id === messageId);
+    if (!msg || translatingMessageId) return;
+
+    if (msg.translations?.[targetLang]) return;
+
+    setTranslatingMessageId(messageId);
+    try {
+      const res = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: msg.content,
+          targetLanguage: targetLang,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id === messageId) {
+              return {
+                ...m,
+                translations: {
+                  ...(m.translations || {}),
+                  [targetLang]: data.translation,
+                },
+                translatedContent: {
+                  language: targetLang,
+                  languageName: data.languageName,
+                  text: data.translation,
+                },
+              };
+            }
+            return m;
+          })
+        );
+      }
+    } catch (err) {
+      console.error("Message translation failed:", err);
+    } finally {
+      setTranslatingMessageId(null);
+    }
   };
 
   const handleGoogleSignIn = async () => {
@@ -305,8 +461,9 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
         onOpenLocationModal={() => setIsLocationModalOpen(true)}
         onOpenVoiceModal={() => setIsVoiceModalOpen(true)}
         onOpenTgicccModal={() => setIsTgicccModalOpen(true)}
+        onOpenVoiceSettings={() => setIsVoiceSettingsOpen(true)}
         language={language}
-        onToggleLanguage={toggleLanguage}
+        onSelectLanguage={(newLang) => setLanguage(newLang)}
         user={user}
         onSignIn={handleGoogleSignIn}
         onSignOut={handleGoogleSignOut}
@@ -340,6 +497,41 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
             />
           )}
 
+          {/* 1. WeatherGPT Voice Assistant Component */}
+          <VoiceAssistantCard
+            activeLocation={activeLocation}
+            currentWeather={currentWeather}
+            language={language}
+            onSelectLanguage={(newLang) => setLanguage(newLang)}
+            onAskQuestion={async (questionText) => {
+              return await handleSendMessage(questionText);
+            }}
+            onSyncInputText={(spokenText) => {
+              setInputMessage(spokenText);
+            }}
+          />
+
+          {/* 2. Crop-Aware Farmer Mode Component */}
+          <FarmerModeCard
+            activeLocation={activeLocation}
+            currentWeather={currentWeather}
+            language={language}
+            onOpenVoiceSettings={() => setIsVoiceSettingsOpen(true)}
+            onAdvisoryGenerated={(advisoryText, cropName) => {
+              const asstMsg: ChatMessage = {
+                id: `crop-adv-${Date.now()}`,
+                role: "assistant",
+                content: advisoryText,
+                contentTelugu: language === "te" ? advisoryText : undefined,
+                timestamp: new Date().toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                }),
+              };
+              setMessages((prev) => [...prev, asstMsg]);
+            }}
+          />
+
           {/* AI Capabilities Indicator Strip */}
           <div className="bg-[#fcfbfa] border border-stone-200/90 rounded-2xl p-3 sm:p-3.5 text-xs text-stone-700 flex items-start gap-3 shadow-xs">
             <div className="p-1.5 rounded-xl bg-amber-100/80 text-amber-800 border border-amber-200/80 shrink-0 mt-0.5">
@@ -351,7 +543,7 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
                   Weather Intelligence Engine Active
                 </span>
                 <span className="px-2 py-0.5 rounded-md bg-stone-100 text-stone-700 border border-stone-200 font-mono text-[10px]">
-                  Telugu (తెలుగు)
+                  {langInfo.nativeName} ({langInfo.name})
                 </span>
                 <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-mono text-[10px]">
                   Open-Meteo Grounded
@@ -378,6 +570,9 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
               key={msg.id}
               message={msg}
               globalLanguage={language}
+              onTranslateMessage={handleTranslateMessage}
+              onOpenVoiceSettings={() => setIsVoiceSettingsOpen(true)}
+              isTranslating={translatingMessageId === msg.id}
             />
           ))}
 
@@ -403,6 +598,88 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
             language={language}
           />
 
+          {/* Real-time Listening Badge with Audio Waveform & Speech Feedback */}
+          {isListeningInput && (
+            <div className="flex items-center justify-between px-3 py-2 rounded-2xl bg-rose-50/90 border border-rose-200 text-rose-900 text-xs shadow-xs">
+              <div className="flex items-center gap-2.5 overflow-hidden">
+                <span className="relative flex h-3 w-3 shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-600"></span>
+                </span>
+
+                {/* Animated Audio Volume Waves */}
+                <div className="flex items-center gap-0.5 h-4 shrink-0 px-1 bg-rose-100/80 rounded-md">
+                  <span
+                    className="w-1 bg-rose-600 rounded-full transition-all duration-75"
+                    style={{ height: `${Math.max(4, Math.min(16, 4 + inputVolumeLevel * 0.2))}px` }}
+                  />
+                  <span
+                    className="w-1 bg-rose-600 rounded-full transition-all duration-75"
+                    style={{ height: `${Math.max(6, Math.min(16, 6 + inputVolumeLevel * 0.35))}px` }}
+                  />
+                  <span
+                    className="w-1 bg-rose-600 rounded-full transition-all duration-75"
+                    style={{ height: `${Math.max(8, Math.min(16, 8 + inputVolumeLevel * 0.5))}px` }}
+                  />
+                  <span
+                    className="w-1 bg-rose-600 rounded-full transition-all duration-75"
+                    style={{ height: `${Math.max(5, Math.min(16, 5 + inputVolumeLevel * 0.3))}px` }}
+                  />
+                </div>
+
+                <div className="truncate">
+                  {inputMessage.trim() ? (
+                    <span className="font-medium text-stone-900">
+                      <span className="text-stone-500 font-normal">
+                        {language === "te" ? "గుర్తించిన మాటలు: " : "Hearing: "}
+                      </span>
+                      &ldquo;{inputMessage}&rdquo;
+                    </span>
+                  ) : (
+                    <span className="text-rose-800 font-medium">
+                      {language === "te"
+                        ? "వింటున్నాను... ఇప్పుడు మాట్లాడండి"
+                        : "Listening... Speak your question now"}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 ml-2">
+                {inputMessage.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleToggleInputSpeech();
+                    }}
+                    className="px-2.5 py-1 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-[11px] shadow-xs cursor-pointer transition-colors"
+                  >
+                    {language === "te" ? "పంపండి (Send)" : "Send Now"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleToggleInputSpeech}
+                  className="text-stone-600 hover:text-stone-900 font-medium text-[11px] underline cursor-pointer"
+                >
+                  {language === "te" ? "రద్దు (Stop)" : "Stop"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {inputSpeechError && (
+            <div className="px-2 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between">
+              <span>{inputSpeechError}</span>
+              <button
+                onClick={() => setInputSpeechError(null)}
+                className="text-amber-800 font-bold text-[11px] cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {/* Floating Pill Chat Input Box */}
           <div className="relative flex items-center gap-2">
             <div className="relative flex-1 group">
@@ -417,11 +694,18 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
                   onKeyDown={handleKeyDown}
                   disabled={isLoading}
                   placeholder={
-                    language === "te"
-                      ? `${activeLocation.name} కోసం వాతావరణ సలహా అడగండి (ఉదా: రేపు పురుగుమందు పిచికారీ చేయవచ్చా?)...`
-                      : `Ask weather advice for ${activeLocation.name} (e.g. Should I spray pesticide tomorrow?)...`
+                    isListeningInput
+                      ? language === "te"
+                        ? "మీ మాటలు ఇక్కడ రికార్డ్ అవుతున్నాయి..."
+                        : "Recording your speech..."
+                      : ui.inputPlaceholder ||
+                        `Ask weather advice for ${activeLocation.name} (e.g. Should I spray pesticide tomorrow?)...`
                   }
-                  className="w-full pl-4 pr-12 py-3 rounded-2xl border border-stone-300 bg-white text-stone-900 text-sm focus:outline-hidden focus:ring-2 focus:ring-amber-500/25 focus:border-amber-600 transition-all disabled:opacity-50 placeholder:text-stone-400 shadow-xs"
+                  className={`w-full pl-4 pr-12 py-3 rounded-2xl border text-sm focus:outline-hidden transition-all disabled:opacity-50 placeholder:text-stone-400 shadow-xs ${
+                    isListeningInput
+                      ? "border-rose-400 bg-rose-50/40 text-stone-900 ring-2 ring-rose-200"
+                      : "border-stone-300 bg-white text-stone-900 focus:ring-2 focus:ring-amber-500/25 focus:border-amber-600"
+                  }`}
                 />
                 <button
                   id="btn-send-query"
@@ -435,14 +719,36 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
               </div>
             </div>
 
-            {/* Quick Voice Trigger */}
+            {/* Quick Microphone Speech-to-Text Button */}
             <button
               id="btn-footer-voice"
-              onClick={() => setIsVoiceModalOpen(true)}
-              className="p-3 rounded-2xl border border-amber-300/80 bg-amber-100/70 hover:bg-amber-200/80 text-amber-900 transition-colors shrink-0 cursor-pointer shadow-xs"
-              title="Speak with WeatherGPT Live Voice"
+              onClick={handleToggleInputSpeech}
+              className={`p-3 rounded-2xl border transition-all shrink-0 cursor-pointer shadow-xs ${
+                isListeningInput
+                  ? "bg-rose-600 text-white border-rose-500 ring-4 ring-rose-200 animate-pulse"
+                  : "border-amber-300/80 bg-amber-100/70 hover:bg-amber-200/80 text-amber-900"
+              }`}
+              title={
+                isListeningInput
+                  ? "Stop listening"
+                  : "🎙️ Tap to speak — speech will appear in input and response will be read aloud"
+              }
             >
-              <Mic className="w-4 h-4" />
+              {isListeningInput ? (
+                <div className="w-4 h-4 rounded-xs bg-white" />
+              ) : (
+                <Mic className="w-4 h-4" />
+              )}
+            </button>
+
+            {/* Live Gemini WebSocket Audio Option */}
+            <button
+              id="btn-footer-live-audio"
+              onClick={() => setIsVoiceModalOpen(true)}
+              className="p-3 rounded-2xl border border-stone-200 bg-stone-100/80 hover:bg-stone-200 text-stone-700 transition-colors shrink-0 cursor-pointer shadow-xs hidden sm:flex"
+              title="Live Bidirectional Voice Mode (WebSocket)"
+            >
+              <Radio className="w-4 h-4 text-emerald-700" />
             </button>
 
             {/* Quick Location Trigger */}
@@ -475,8 +781,8 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
                 TGICCC Dial 112
               </button>
               <span>•</span>
-              <span>
-                {language === "te" ? "తెలుగు మోడ్ ఆన్" : "English Mode"}
+              <span className="font-medium text-stone-700">
+                {langInfo.nativeName} ({langInfo.name})
               </span>
             </div>
           </div>
@@ -496,6 +802,8 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
         isOpen={isVoiceModalOpen}
         onClose={() => setIsVoiceModalOpen(false)}
         locationName={activeLocation.name}
+        language={language}
+        onOpenVoiceSettings={() => setIsVoiceSettingsOpen(true)}
       />
 
       {/* TGICCC Command Centre & Emergency Helplines Modal */}
@@ -504,6 +812,27 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
         onClose={() => setIsTgicccModalOpen(false)}
         language={language}
         onAskQuery={(q) => handleSendMessage(q)}
+      />
+
+      {/* Voice & Speech Settings Modal (Language, Native Voice, Speed) */}
+      <VoiceSettingsModal
+        isOpen={isVoiceSettingsOpen}
+        onClose={() => setIsVoiceSettingsOpen(false)}
+        currentLanguage={language}
+        onSelectLanguage={(newLang) => setLanguage(newLang)}
+      />
+
+      {/* Voice Unavailable Notification Dialog */}
+      <VoiceUnavailableDialog
+        info={voiceUnavailableInfo}
+        onClose={() => setVoiceUnavailableInfo(null)}
+        onOpenVoiceSettings={() => {
+          setVoiceUnavailableInfo(null);
+          setIsVoiceSettingsOpen(true);
+        }}
+        onReadAsText={() => {
+          setVoiceUnavailableInfo(null);
+        }}
       />
     </div>
   );

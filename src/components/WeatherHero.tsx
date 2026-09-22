@@ -14,13 +14,14 @@ import {
   Sparkles,
   Compass,
 } from "lucide-react";
-import { CurrentWeatherData, LocationItem } from "../types";
+import { CurrentWeatherData, LocationItem, SupportedLanguageCode } from "../types";
+import { getUiTranslation, getLanguageInfo } from "../data/languages";
 
 interface WeatherHeroProps {
   location: LocationItem;
   weather: CurrentWeatherData | null;
   isLoading: boolean;
-  language: "en" | "te";
+  language: SupportedLanguageCode;
   onOpenLocationModal: () => void;
   onOpenTgicccModal: () => void;
   onAskAdvice: (prompt: string) => void;
@@ -37,6 +38,8 @@ export const WeatherHero: React.FC<WeatherHeroProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const isTelugu = language === "te";
+  const ui = getUiTranslation(language);
+  const langInfo = getLanguageInfo(language);
 
   // Dynamic atmospheric weather condition style
   const getAtmosphericGlow = () => {
@@ -178,7 +181,7 @@ export const WeatherHero: React.FC<WeatherHeroProps> = ({
                           {weather.condition}
                         </span>
                         <span className="text-xs text-stone-500">
-                          (Feels like {weather.apparentTemperature}°C)
+                          ({ui.feelsLike} {weather.apparentTemperature}°C)
                         </span>
                       </div>
                     </div>
@@ -194,13 +197,19 @@ export const WeatherHero: React.FC<WeatherHeroProps> = ({
                       {weather.rainProbability >= 60
                         ? isTelugu
                           ? "వర్షం పడే అవకాశం ఎక్కువగా ఉంది. ప్రయాణాలలో గొడుగు వెంట ఉంచుకోండి."
+                          : language === "hi"
+                          ? "बारिश की अधिक संभावना है। बाहर निकलते समय छाता साथ रखें।"
                           : "High chance of rain showers. Carry protective gear for commutes."
                         : weather.temperature >= 35
                         ? isTelugu
                           ? "ఎండ ఎక్కువగా ఉంది. తగినంత నీరు త్రాగండి, బయట ఎండలో జాగ్రత్త."
+                          : language === "hi"
+                          ? "तेज़ धूप और गर्मी है। पर्याप्त पानी पिएं और धूप से बचें।"
                           : "Elevated daytime temperatures. Maintain hydration and sun protection."
                         : isTelugu
                           ? "వాతావరణం అనుకూలంగా ఉంది. వ్యవసాయం మరియు దైనందిన పనులకు అనువైన సమయం."
+                          : language === "hi"
+                          ? "मौसम सुहावना और अनुकूल है। दैनिक कार्यों के लिए उपयुक्त समय है।"
                           : "Pleasant outdoor weather. Conditions are currently stable."}
                     </p>
                   </div>
@@ -212,7 +221,7 @@ export const WeatherHero: React.FC<WeatherHeroProps> = ({
                     <Droplets className="w-4 h-4 text-sky-600 shrink-0" />
                     <div className="min-w-0">
                       <span className="text-[10px] text-stone-500 block uppercase tracking-wider">
-                        Humidity
+                        {ui.humidity}
                       </span>
                       <span className="text-xs font-bold text-stone-900">
                         {weather.humidity}%
@@ -224,7 +233,7 @@ export const WeatherHero: React.FC<WeatherHeroProps> = ({
                     <Wind className="w-4 h-4 text-amber-700 shrink-0" />
                     <div className="min-w-0">
                       <span className="text-[10px] text-stone-500 block uppercase tracking-wider">
-                        Wind Speed
+                        {ui.wind}
                       </span>
                       <span className="text-xs font-bold text-stone-900 truncate">
                         {weather.windSpeed} km/h
@@ -237,7 +246,7 @@ export const WeatherHero: React.FC<WeatherHeroProps> = ({
                     <CloudRain className="w-4 h-4 text-indigo-600 shrink-0" />
                     <div className="min-w-0">
                       <span className="text-[10px] text-stone-500 block uppercase tracking-wider">
-                        Rain Likelihood
+                        {ui.rainRisk}
                       </span>
                       <span className="text-xs font-bold text-stone-900">
                         {weather.rainProbability}%
@@ -249,7 +258,7 @@ export const WeatherHero: React.FC<WeatherHeroProps> = ({
                     <Thermometer className="w-4 h-4 text-emerald-700 shrink-0" />
                     <div className="min-w-0">
                       <span className="text-[10px] text-stone-500 block uppercase tracking-wider">
-                        Day / Night
+                        Cycle
                       </span>
                       <span className="text-xs font-bold text-stone-900">
                         {weather.isDay ? "Daylight" : "Nighttime"}

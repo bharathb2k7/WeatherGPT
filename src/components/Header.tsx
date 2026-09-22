@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   MapPin,
@@ -12,8 +12,12 @@ import {
   LogIn,
   LogOut,
   ShieldAlert,
+  Globe,
+  Check,
+  Volume2,
 } from "lucide-react";
-import { LocationItem, CurrentWeatherData } from "../types";
+import { LocationItem, CurrentWeatherData, SupportedLanguageCode } from "../types";
+import { SUPPORTED_LANGUAGES, getLanguageInfo, getUiTranslation } from "../data/languages";
 import { User } from "firebase/auth";
 
 interface HeaderProps {
@@ -23,8 +27,10 @@ interface HeaderProps {
   onOpenLocationModal: () => void;
   onOpenVoiceModal: () => void;
   onOpenTgicccModal?: () => void;
-  language: "en" | "te";
-  onToggleLanguage: () => void;
+  onOpenVoiceSettings?: () => void;
+  language: SupportedLanguageCode;
+  onSelectLanguage: (lang: SupportedLanguageCode) => void;
+  onToggleLanguage?: () => void;
   user: User | null;
   onSignIn: () => void;
   onSignOut: () => void;
@@ -37,12 +43,34 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenLocationModal,
   onOpenVoiceModal,
   onOpenTgicccModal,
+  onOpenVoiceSettings,
   language,
+  onSelectLanguage,
   onToggleLanguage,
   user,
   onSignIn,
   onSignOut,
 }) => {
+  const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
+  const langMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const currentLangInfo = getLanguageInfo(language);
+  const ui = getUiTranslation(language);
+
+  // Close language menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (langMenuRef.current && !langMenuRef.current.contains(event.target as Node)) {
+        setIsLangMenuOpen(false);
+      }
+    };
+    if (isLangMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isLangMenuOpen]);
   return (
     <header
       id="weathergpt-header"
@@ -136,40 +164,161 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="hidden sm:inline">Voice</span>
           </button>
 
-          {/* Language Toggle Button with Smooth Spring Animation */}
-          <motion.button
-            id="btn-language-toggle"
-            onClick={onToggleLanguage}
-            whileHover={{ scale: 1.04 }}
-            whileTap={{ scale: 0.96 }}
-            layout
-            transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border shadow-xs cursor-pointer select-none transition-colors duration-200 ${
-              language === "te"
-                ? "bg-amber-800 hover:bg-amber-900 text-white border-amber-800 shadow-amber-900/10"
-                : "bg-white hover:bg-stone-50 text-stone-800 border-stone-300/80"
-            }`}
-            title="Toggle between English and Telugu (తెలుగు)"
-          >
-            <motion.div
-              animate={{ rotate: language === "te" ? 180 : 0 }}
-              transition={{ duration: 0.3, ease: "easeInOut" }}
+          {/* Voice & TTS Settings Button */}
+          {onOpenVoiceSettings && (
+            <button
+              id="btn-header-voice-settings"
+              onClick={onOpenVoiceSettings}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold bg-white hover:bg-stone-50 text-stone-700 hover:text-stone-900 border border-stone-300/80 transition-all shadow-xs cursor-pointer"
+              title="Voice & Speech Settings (Language, Voice, Speed)"
             >
-              <Languages className={`w-3.5 h-3.5 ${language === "te" ? "text-amber-200" : "text-amber-700"}`} />
-            </motion.div>
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.span
-                key={language}
-                initial={{ opacity: 0, y: -4, filter: "blur(2px)" }}
-                animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-                exit={{ opacity: 0, y: 4, filter: "blur(2px)" }}
-                transition={{ duration: 0.18, ease: "easeOut" }}
-                className="inline-block min-w-[30px] text-center"
-              >
-                {language === "te" ? "తెలుగు" : "EN"}
-              </motion.span>
+              <Volume2 className="w-3.5 h-3.5 text-stone-600" />
+              <span className="hidden lg:inline">{language === "te" ? "వాయిస్" : "Voice"}</span>
+            </button>
+          )}
+
+          {/* Multi-Language Selector Dropdown */}
+          <div className="relative" ref={langMenuRef}>
+            <motion.button
+              id="btn-language-selector"
+              onClick={() => setIsLangMenuOpen(!isLangMenuOpen)}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-semibold border shadow-xs cursor-pointer select-none transition-all duration-200 ${
+                isLangMenuOpen
+                  ? "bg-amber-800 text-white border-amber-800 shadow-amber-900/15"
+                  : language !== "en"
+                  ? "bg-amber-100/90 hover:bg-amber-200/80 text-amber-900 border-amber-300/80"
+                  : "bg-white hover:bg-stone-50 text-stone-800 border-stone-300/80"
+              }`}
+              title="Select Language (14+ Indian & Global languages)"
+              aria-expanded={isLangMenuOpen}
+            >
+              <Languages
+                className={`w-3.5 h-3.5 ${
+                  isLangMenuOpen
+                    ? "text-amber-200"
+                    : language !== "en"
+                    ? "text-amber-800"
+                    : "text-amber-700"
+                }`}
+              />
+              <span className="inline-block max-w-[70px] sm:max-w-[90px] truncate font-medium">
+                {currentLangInfo.nativeName}
+              </span>
+              <ChevronDown
+                className={`w-3 h-3 transition-transform duration-200 ${
+                  isLangMenuOpen ? "rotate-180 text-amber-200" : "text-stone-500"
+                }`}
+              />
+            </motion.button>
+
+            {/* Language Selection Menu */}
+            <AnimatePresence>
+              {isLangMenuOpen && (
+                <motion.div
+                  id="menu-language-options"
+                  initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.96 }}
+                  transition={{ duration: 0.16, ease: "easeOut" }}
+                  className="absolute right-0 mt-2 w-72 sm:w-80 bg-[#fdfcf9] border border-stone-200 rounded-2xl shadow-xl z-50 overflow-hidden"
+                >
+                  <div className="p-3 border-b border-stone-200/80 bg-stone-100/60 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Globe className="w-4 h-4 text-amber-800" />
+                      <span className="text-xs font-bold text-stone-800 tracking-tight">
+                        Select Language / భాషను ఎంచుకోండి
+                      </span>
+                    </div>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100/90 text-amber-900 font-semibold border border-amber-200/60">
+                      14 Languages
+                    </span>
+                  </div>
+
+                  <div className="max-h-80 overflow-y-auto p-2 divide-y divide-stone-100">
+                    {/* Indian Languages Section */}
+                    <div className="pb-2">
+                      <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                        Indian Languages (భారతీయ భాషలు)
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 mt-1">
+                        {SUPPORTED_LANGUAGES.filter((l) => l.category === "Indian").map((lang) => {
+                          const isSelected = language === lang.code;
+                          return (
+                            <button
+                              key={lang.code}
+                              id={`btn-lang-${lang.code}`}
+                              onClick={() => {
+                                onSelectLanguage(lang.code);
+                                setIsLangMenuOpen(false);
+                              }}
+                              className={`flex items-center justify-between px-2.5 py-2 rounded-xl text-xs transition-all text-left cursor-pointer ${
+                                isSelected
+                                  ? "bg-amber-800 text-white font-semibold shadow-xs"
+                                  : "hover:bg-stone-100 text-stone-700"
+                              }`}
+                            >
+                              <div className="truncate pr-1">
+                                <span className="block font-medium truncate">{lang.nativeName}</span>
+                                <span
+                                  className={`block text-[10px] ${
+                                    isSelected ? "text-amber-200" : "text-stone-500"
+                                  }`}
+                                >
+                                  {lang.name}
+                                </span>
+                              </div>
+                              {isSelected && <Check className="w-3.5 h-3.5 shrink-0 text-amber-200" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Global Languages Section */}
+                    <div className="pt-2">
+                      <div className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-stone-500">
+                        Global Languages
+                      </div>
+                      <div className="grid grid-cols-2 gap-1 mt-1">
+                        {SUPPORTED_LANGUAGES.filter((l) => l.category === "Global").map((lang) => {
+                          const isSelected = language === lang.code;
+                          return (
+                            <button
+                              key={lang.code}
+                              id={`btn-lang-${lang.code}`}
+                              onClick={() => {
+                                onSelectLanguage(lang.code);
+                                setIsLangMenuOpen(false);
+                              }}
+                              className={`flex items-center justify-between px-2.5 py-2 rounded-xl text-xs transition-all text-left cursor-pointer ${
+                                isSelected
+                                  ? "bg-amber-800 text-white font-semibold shadow-xs"
+                                  : "hover:bg-stone-100 text-stone-700"
+                              }`}
+                            >
+                              <div className="truncate pr-1">
+                                <span className="block font-medium truncate">{lang.nativeName}</span>
+                                <span
+                                  className={`block text-[10px] ${
+                                    isSelected ? "text-amber-200" : "text-stone-500"
+                                  }`}
+                                >
+                                  {lang.name}
+                                </span>
+                              </div>
+                              {isSelected && <Check className="w-3.5 h-3.5 shrink-0 text-amber-200" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
             </AnimatePresence>
-          </motion.button>
+          </div>
 
           {/* Firebase Authentication Sign-In / User Profile */}
           {user ? (

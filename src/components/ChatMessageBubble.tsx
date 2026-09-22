@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   CloudSun,
@@ -13,19 +13,55 @@ import {
   Anchor,
   Car,
   ShieldAlert,
+  Loader2,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
-import { ChatMessage } from "../types";
+import { ChatMessage, SupportedLanguageCode } from "../types";
+import { getLanguageInfo } from "../data/languages";
+import { SpeechControls } from "./SpeechControls";
 
 interface ChatMessageBubbleProps {
   message: ChatMessage;
-  globalLanguage: "en" | "te";
+  globalLanguage: SupportedLanguageCode;
+  onTranslateMessage?: (messageId: string, targetLang: SupportedLanguageCode) => void;
+  onOpenVoiceSettings?: () => void;
+  isTranslating?: boolean;
 }
 
 export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
   message,
   globalLanguage,
+  onTranslateMessage,
+  onOpenVoiceSettings,
+  isTranslating = false,
 }) => {
   const isUser = message.role === "user";
+  const currentLangInfo = getLanguageInfo(globalLanguage);
+  const [showOriginal, setShowOriginal] = useState(false);
+
+  // Check if content already contains Telugu characters
+  const isMessageTelugu = /[\u0C00-\u0C7F]/.test(message.content);
+
+  // Determine the active text in user's selected language
+  const activeLanguageContent =
+    globalLanguage === "te"
+      ? (isMessageTelugu
+          ? message.content
+          : message.contentTelugu ||
+            message.translations?.te ||
+            (message.translatedContent?.language === "te" ? message.translatedContent.text : undefined) ||
+            message.content)
+      : globalLanguage !== "en"
+      ? (message.translations?.[globalLanguage] ||
+         (message.translatedContent?.language === globalLanguage ? message.translatedContent.text : undefined) ||
+         message.content)
+      : message.content;
+
+  const hasAlternativeLanguage =
+    activeLanguageContent !== message.content && message.content.trim().length > 0;
+
+  const displayedContent = showOriginal ? message.content : activeLanguageContent;
 
   // Persona detector based on content keywords
   const detectPersona = (text: string) => {
@@ -107,18 +143,59 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
           {cleanBody}
         </p>
 
-        {/* Telugu translated text block if available or requested */}
-        {message.contentTelugu && (
-          <div className="mt-3 p-3 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-xs text-stone-800">
-            <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-amber-200 text-[11px] font-semibold text-amber-900">
-              <span className="flex items-center gap-1.5">
-                <Languages className="w-3.5 h-3.5 text-amber-800" />
-                తెలుగు అనువాదం (Telugu Translation)
+        {/* Source citation if present */}
+        {sourceLine && (
+          <div className="pt-1.5 text-[11px] font-mono text-stone-500">
+            {sourceLine}
+          </div>
+        )}
+
+        {/* Alternative Language / Original Toggle */}
+        {hasAlternativeLanguage && (
+          <div className="mt-2.5 pt-2 border-t border-stone-100 flex items-center justify-between text-[11px] text-stone-500">
+            <span className="flex items-center gap-1.5 font-medium text-amber-800">
+              <Languages className="w-3.5 h-3.5 text-amber-700" />
+              <span>
+                {showOriginal
+                  ? "Showing English Original"
+                  : `${currentLangInfo.nativeName} (${currentLangInfo.name})`}
               </span>
-            </div>
-            <p className="leading-relaxed font-normal text-stone-800">
-              {message.contentTelugu}
-            </p>
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowOriginal(!showOriginal)}
+              className="text-[11px] font-medium text-amber-800 hover:text-amber-950 underline underline-offset-2 transition-colors cursor-pointer"
+            >
+              {showOriginal
+                ? globalLanguage === "te"
+                  ? "తెలుగు సమాధానం చూడండి"
+                  : `Switch to ${currentLangInfo.nativeName}`
+                : globalLanguage === "te"
+                ? "View English original"
+                : "View original"}
+            </button>
+          </div>
+        )}
+
+        {/* If global language is not English, and message is not translated yet, offer translate action */}
+        {!hasAlternativeLanguage && !isMessageTelugu && globalLanguage !== "en" && onTranslateMessage && (
+          <div className="mt-2 pt-2 border-t border-stone-100 flex items-center justify-between">
+            <button
+              type="button"
+              id={`btn-translate-msg-${message.id}`}
+              onClick={() => onTranslateMessage(message.id, globalLanguage)}
+              disabled={isTranslating}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-100/70 hover:bg-amber-200/70 text-amber-900 border border-amber-200 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-50"
+            >
+              {isTranslating ? (
+                <Loader2 className="w-3 h-3 animate-spin text-amber-800" />
+              ) : (
+                <Languages className="w-3 h-3 text-amber-800" />
+              )}
+              <span>
+                Translate to {currentLangInfo.nativeName} ({currentLangInfo.name})
+              </span>
+            </button>
           </div>
         )}
 
@@ -201,15 +278,26 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
       <div className={`max-w-[88%] sm:max-w-[78%] space-y-1.5`}>
         {/* Author & Timestamp */}
         <div
-          className={`flex items-center gap-1.5 text-[11px] text-stone-500 ${
-            isUser ? "justify-end" : "justify-start"
+          className={`flex items-center gap-2 text-[11px] text-stone-500 ${
+            isUser ? "justify-end" : "justify-between"
           }`}
         >
-          <span className="font-semibold text-stone-700">
-            {isUser ? "You" : "WeatherGPT Advisor"}
-          </span>
-          <span>•</span>
-          <span className="font-mono text-[10px]">{message.timestamp}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-stone-700">
+              {isUser ? "You" : "WeatherGPT Advisor"}
+            </span>
+            <span>•</span>
+            <span className="font-mono text-[10px]">{message.timestamp}</span>
+          </div>
+
+          {!isUser && !message.isError && (
+            <SpeechControls
+              textToSpeak={displayedContent}
+              language={showOriginal ? "en" : globalLanguage}
+              onOpenVoiceSettings={onOpenVoiceSettings}
+              size="sm"
+            />
+          )}
         </div>
 
         {/* Message Card */}
@@ -263,7 +351,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = ({
               {message.content}
             </p>
           ) : (
-            renderFormattedAssistantContent(message.content)
+            renderFormattedAssistantContent(displayedContent)
           )}
         </div>
       </div>

@@ -9,12 +9,13 @@ import {
   Sparkles,
 } from "lucide-react";
 import { QUICK_PROMPTS } from "../data/constants";
-import { QuickPrompt } from "../types";
+import { QuickPrompt, SupportedLanguageCode } from "../types";
+import { getUiTranslation } from "../data/languages";
 
 interface QuickPromptsBarProps {
   onSelectPrompt: (promptText: string) => void;
   disabled?: boolean;
-  language: "en" | "te";
+  language: SupportedLanguageCode;
 }
 
 export const QuickPromptsBar: React.FC<QuickPromptsBarProps> = ({
@@ -22,7 +23,7 @@ export const QuickPromptsBar: React.FC<QuickPromptsBarProps> = ({
   disabled,
   language,
 }) => {
-  const isTelugu = language === "te";
+  const ui = getUiTranslation(language);
 
   const renderIcon = (iconName: string) => {
     switch (iconName) {
@@ -45,22 +46,22 @@ export const QuickPromptsBar: React.FC<QuickPromptsBarProps> = ({
     switch (persona) {
       case "farmer":
         return {
-          label: isTelugu ? "రైతులు" : "Farmer",
+          label: ui.farmer,
           style: "bg-emerald-100 text-emerald-800 border-emerald-200",
         };
       case "fisher":
         return {
-          label: isTelugu ? "మత్స్యకారులు" : "Fisher",
+          label: ui.fisher,
           style: "bg-sky-100 text-sky-800 border-sky-200",
         };
       case "commuter":
         return {
-          label: isTelugu ? "ప్రయాణం" : "Commuter",
+          label: ui.commuter,
           style: "bg-amber-100 text-amber-900 border-amber-200",
         };
       default:
         return {
-          label: isTelugu ? "సలహా" : "Citizen",
+          label: ui.citizen,
           style: "bg-stone-100 text-stone-700 border-stone-200",
         };
     }
@@ -71,14 +72,14 @@ export const QuickPromptsBar: React.FC<QuickPromptsBarProps> = ({
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1 px-0.5">
         <div className="flex items-center gap-1 text-[11px] font-semibold text-stone-500 uppercase tracking-wider whitespace-nowrap shrink-0 pr-1">
           <Sparkles className="w-3 h-3 text-amber-700" />
-          <span>{isTelugu ? "త్వరిత ప్రశ్నలు:" : "Quick queries:"}</span>
+          <span>{ui.quickQueries}</span>
         </div>
 
         {QUICK_PROMPTS.map((item) => {
           const displayPrompt =
-            isTelugu && item.promptTelugu
-              ? item.promptTelugu
-              : item.prompt;
+            item.promptTranslations?.[language] ||
+            (language === "te" && item.promptTelugu ? item.promptTelugu : undefined) ||
+            item.prompt;
           const badge = getPersonaBadge(item.persona);
 
           return (

@@ -1,16 +1,22 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Mic, MicOff, Volume2, X, AlertCircle, Sparkles, Loader2 } from "lucide-react";
+import { Mic, MicOff, Volume2, X, AlertCircle, Sparkles, Loader2, Settings } from "lucide-react";
+import { SupportedLanguageCode } from "../types";
+import { LANGUAGE_CONFIG } from "../utils/speech";
 
 interface VoiceModalProps {
   isOpen: boolean;
   onClose: () => void;
   locationName: string;
+  language?: SupportedLanguageCode;
+  onOpenVoiceSettings?: () => void;
 }
 
 export const VoiceModal: React.FC<VoiceModalProps> = ({
   isOpen,
   onClose,
   locationName,
+  language = "en",
+  onOpenVoiceSettings,
 }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [status, setStatus] = useState<"idle" | "listening" | "speaking" | "error">("idle");
@@ -155,7 +161,7 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
         const recognition = new SpeechRecognition();
         recognition.continuous = true;
         recognition.interimResults = true;
-        recognition.lang = "en-IN";
+        recognition.lang = LANGUAGE_CONFIG[language]?.locale || "en-IN";
 
         recognition.onresult = (event: any) => {
           let current = "";
@@ -184,13 +190,26 @@ export const VoiceModal: React.FC<VoiceModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/60 backdrop-blur-xs animate-in fade-in duration-150">
       <div className="relative w-full max-w-md bg-gradient-to-b from-[#fdfcf9] via-[#faf7f0] to-[#f5f2eb] rounded-3xl shadow-2xl border border-stone-300/80 overflow-hidden flex flex-col items-center p-6 text-center space-y-5 text-stone-900">
-        {/* Close Button */}
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 p-2 text-stone-400 hover:text-stone-800 rounded-xl hover:bg-stone-100 transition-colors cursor-pointer"
-        >
-          <X className="w-5 h-5" />
-        </button>
+        {/* Top Actions: Voice Settings & Close */}
+        <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none">
+          {onOpenVoiceSettings ? (
+            <button
+              onClick={onOpenVoiceSettings}
+              className="p-2 text-stone-500 hover:text-stone-900 rounded-xl hover:bg-stone-200/60 transition-colors cursor-pointer pointer-events-auto"
+              title="Voice & Speed Settings"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          ) : <div />}
+
+          <button
+            onClick={onClose}
+            className="p-2 text-stone-400 hover:text-stone-800 rounded-xl hover:bg-stone-100 transition-colors cursor-pointer pointer-events-auto"
+            title="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
 
         {/* Title & Badge */}
         <div className="space-y-1">

@@ -15,11 +15,12 @@ import {
   ChevronRight,
   ShieldCheck,
 } from "lucide-react";
+import { SupportedLanguageCode } from "../types";
 
 interface TgicccModalProps {
   isOpen: boolean;
   onClose: () => void;
-  language: "en" | "te";
+  language: SupportedLanguageCode;
   onAskQuery: (query: string) => void;
 }
 

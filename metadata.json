@@ -1,6 +1,6 @@
 {
   "name": "WeatherGPT",
-  "description": "Conversational AI assistant delivering actionable, plain-language weather advice grounded in live Open-Meteo forecast data, Google Search grounding, Telugu translations, and live voice conversations.",
+  "description": "Conversational AI assistant delivering actionable weather intelligence, live Open-Meteo telemetry, AI Crop Damage & Pest Advisory with multilingual voice interaction (English/Telugu), and Gemini plant pathology analysis.",
   "requestFramePermissions": ["geolocation", "microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
