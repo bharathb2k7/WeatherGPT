@@ -3,6 +3,8 @@ import {
   getAuth, 
   GoogleAuthProvider, 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   signOut, 
   onAuthStateChanged,
   User 
@@ -34,24 +36,61 @@ export const db = firebaseConfig.firestoreDatabaseId
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
+// Upsert user profile to Firestore
+export async function syncUserProfile(user: User): Promise<void> {
+  try {
+    const userRef = doc(db, "users", user.uid);
+    await setDoc(userRef, {
+      userId: user.uid,
+      displayName: user.displayName || "User",
+      email: user.email || "",
+      photoURL: user.photoURL || "",
+      lastLogin: new Date().toISOString(),
+    }, { merge: true });
+  } catch (err) {
+    console.warn("Could not sync user profile in Firestore (may be offline or restricted):", err);
+  }
+}
+
+// Check for redirect result on app initialization
+export async function checkRedirectAuthResult(): Promise<User | null> {
+  try {
+    const result = await getRedirectResult(auth);
+    if (result && result.user) {
+      await syncUserProfile(result.user);
+      return result.user;
+    }
+  } catch (err: any) {
+    console.error("Firebase getRedirectResult error:", err);
+  }
+  return null;
+}
+
 export async function signInWithGoogle(): Promise<User | null> {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
     if (user) {
-      // Upsert user profile
-      const userRef = doc(db, "users", user.uid);
-      await setDoc(userRef, {
-        userId: user.uid,
-        displayName: user.displayName || "User",
-        email: user.email || "",
-        photoURL: user.photoURL || "",
-        lastLogin: new Date().toISOString(),
-      }, { merge: true });
+      await syncUserProfile(user);
     }
     return user;
   } catch (error: any) {
     console.error("Sign in with Google error:", error);
+
+    // If popup is blocked by browser or iframe constraints, attempt redirect
+    if (
+      error?.code === "auth/popup-blocked" ||
+      error?.code === "auth/cancelled-popup-request" ||
+      error?.code === "auth/popup-closed-by-user"
+    ) {
+      // In standalone deployed sites, popup may be blocked; redirect is alternative
+      if (error?.code === "auth/popup-blocked") {
+        console.warn("Popup blocked, falling back to signInWithRedirect...");
+        await signInWithRedirect(auth, googleProvider);
+        return null;
+      }
+    }
+
     throw error;
   }
 }

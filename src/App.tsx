@@ -36,6 +36,7 @@ import {
   testFirestoreConnection,
   saveUserChatHistory,
   getUserChatHistory,
+  checkRedirectAuthResult,
 } from "./firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { fetchCurrentWeatherSafely } from "./utils/weatherService";
@@ -57,6 +58,7 @@ export default function App() {
   const [language, setLanguage] = useState<SupportedLanguageCode>("en");
   const [translatingMessageId, setTranslatingMessageId] = useState<string | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const langInfo = getLanguageInfo(language);
   const ui = getUiTranslation(language);
@@ -108,13 +110,17 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Test Firestore Connection & Listen to Auth changes
+  // Test Firestore Connection, Check Redirect Auth & Listen to Auth changes
   useEffect(() => {
     testFirestoreConnection();
+    checkRedirectAuthResult().catch((err) => {
+      console.warn("Redirect auth check note:", err);
+    });
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
+        setAuthError(null);
         // Load past history from Firestore if available
         try {
           const pastHistory = await getUserChatHistory(currentUser.uid);
@@ -432,10 +438,25 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
   };
 
   const handleGoogleSignIn = async () => {
+    setAuthError(null);
     try {
       await signInWithGoogle();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Firebase Sign in failed:", err);
+      const code = err?.code || "";
+      const currentHost = typeof window !== "undefined" ? window.location.hostname : "";
+      
+      if (code === "auth/unauthorized-domain") {
+        setAuthError(
+          `Firebase Auth Error: The domain "${currentHost}" is not authorized in Firebase Authentication. Go to Firebase Console -> Authentication -> Settings -> Authorized Domains and add "${currentHost}".`
+        );
+      } else if (code === "auth/popup-blocked") {
+        setAuthError("Sign-in popup was blocked by your browser. Please enable popups or refresh the page.");
+      } else if (code === "auth/popup-closed-by-user") {
+        // User voluntarily closed popup
+      } else {
+        setAuthError(err?.message || "Sign in failed. Please check browser permissions or Firebase console configuration.");
+      }
     }
   };
 
@@ -468,6 +489,22 @@ Every answer is strictly grounded in real-time Open-Meteo data, Google Search gr
         onSignIn={handleGoogleSignIn}
         onSignOut={handleGoogleSignOut}
       />
+
+      {/* Auth Error Banner for Authorized Domain or Popup configuration */}
+      {authError && (
+        <div className="bg-amber-900/90 text-amber-50 px-4 py-2.5 text-xs sm:text-sm flex items-start justify-between gap-3 shadow-md z-40 border-b border-amber-700">
+          <div className="flex items-start gap-2 flex-1">
+            <span className="font-bold text-amber-300">⚠️ Auth Notice:</span>
+            <span className="leading-relaxed">{authError}</span>
+          </div>
+          <button
+            onClick={() => setAuthError(null)}
+            className="text-amber-300 hover:text-white px-2 py-0.5 text-xs rounded-md bg-amber-950/60 font-semibold cursor-pointer shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Main Chat Area */}
       <main
