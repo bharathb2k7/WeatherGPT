@@ -10,9 +10,22 @@ import { runGeminiCropDamageAnalysis, synthesizeCropDamageFallback } from "./ser
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+
+// Port Resolution:
+// - Inside AI Studio sandbox, nginx reverse proxy routes specifically to port 3000.
+// - On deployment platforms like Render (where process.env.RENDER is 'true' or outside AI Studio),
+//   the service must bind to process.env.PORT (Render sets PORT=10000 by default).
+const isAiStudio = Boolean(process.env.APPLET_ID);
+const PORT: number = isAiStudio
+  ? 3000
+  : (process.env.PORT ? parseInt(process.env.PORT, 10) : (process.env.RENDER ? 10000 : 3000));
 
 app.use(express.json({ limit: "25mb" }));
+
+// Health Check Endpoints (for Render, Cloud Run, and deployment load balancers)
+app.get(["/health", "/healthz", "/api/health"], (_req, res) => {
+  res.status(200).json({ status: "ok", port: PORT, timestamp: new Date().toISOString() });
+});
 
 // Initialize Gemini Client (server-side only)
 function getGeminiClient(): GoogleGenAI {
@@ -1598,6 +1611,17 @@ async function startServer() {
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`WeatherGPT server running on http://0.0.0.0:${PORT}`);
   });
+
+  const handleShutdown = (signal: string) => {
+    console.log(`${signal} received, shutting down gracefully...`);
+    server.close(() => {
+      console.log("WeatherGPT HTTP server closed.");
+      process.exit(0);
+    });
+  };
+
+  process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+  process.on("SIGINT", () => handleShutdown("SIGINT"));
 }
 
 startServer();
